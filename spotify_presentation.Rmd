@@ -16,7 +16,7 @@ library(rvest)
 library(tidyverse)
 library(spotifyr)
 library(knitr)
-library(prettydoc)
+library(ggplot2)
 ```
 
 ```{r echo=FALSE}
@@ -26,9 +26,9 @@ access_token <- get_spotify_access_token()
 ```
 
 ```{r}
-get_audio_features <- function(artist_name, artist_id){
+get_audio_features <- function(artist_name, artist_id, genre){
   
-  # artist <- search_spotify(artist_name, type = "artist", market = "US", limit = 1)
+  artist <- search_spotify(artist_name, type = "artist", market = "US", limit = 1)
   top <- get_artist_top_tracks(artist_id, 
                                market = "US") %>% 
     select(name, id, popularity)
@@ -41,12 +41,11 @@ get_audio_features <- function(artist_name, artist_id){
   
   top <- top %>% 
     left_join(top.features) %>% 
-    select(-c(15:18, 20)) 
-    # mutate(followers.total = artist$followers.total) %>% 
-    # mutate(genres = artist$genres)
+    select(-c(15:18, 20)) %>% 
+    mutate(followers.total = artist$followers.total) %>% 
+    mutate(genre = genre)
   
-  rm(
-     # artist, 
+  rm(artist, 
      top.features)
   
   return(top)
@@ -54,20 +53,54 @@ get_audio_features <- function(artist_name, artist_id){
 ```
 
 ```{r}
-artists <- get_genre_artists(genre = "pop", market = "US", limit = 20) %>% 
-  select(name, id)
+# artists <- get_genre_artists(genre = "pop", market = "US", limit = 20) %>%
+#              mutate(genre = "pop") %>%
+#            bind_rows(get_genre_artists(genre = "rap", market = "US", limit = 20) %>% mutate(genre = "rap")) %>%
+#            bind_rows(get_genre_artists(genre = "rock", market = "US", limit = 20) %>% mutate(genre = "rock")) %>%
+#            select(name, id, genre)
 ```
 
 ```{r message=FALSE, warning=FALSE}
-artist.data <- data.frame()
-for (i in 1:nrow(artists)){
-  artist_name <- artists[i, 1]
-  artist_id   <- artists[i, 2]
-  artist.data <- bind_rows(get_audio_features(artist_name, artist_id))
-}
+# artist.data <- data.frame()
+# for (i in 1:nrow(artists)){
+#   artist_name <- artists[i, 1][[1]]
+#   artist_id   <- artists[i, 2][[1]]
+#   genre <- artists[i, 3][[1]]
+#   artist.data <- bind_rows(artist.data, get_audio_features(artist_name, artist_id, genre))
+# }
+# 
+# save(artist.data, file = "data")
+```
 
+
+```{r}
+load("data")
+str(artist.data)
+data <- artist.data %>% select(-c(name, id, genre)) %>% scale() %>% data.frame()
+```
+
+# Simple analysis
+
+```{r}
+ggplot(artist.data, aes(popularity, fill = genre, colour = genre)) +
+  geom_density(alpha = 0.2, na.rm = TRUE) 
 ```
 
 ```{r}
-artist.data %>%  arrange(name) %>% select(-id) %>% head()
+options(scipen = 8)
+model.lm <- lm(popularity ~ ., data)
+summary(model.lm)
 ```
+The top songs in our catalog are around 86 score in popularity.
+
+Danceability and loudness have significant positive impact on popularity. 
+The hypothesis is that the song is more popular if it is catchy and suitable for dancing on TikTok. 
+
+The simple analysis shows that popularity of the artist significantly influences popularity score of the song.
+The longer the song the less popular it is, with duration having negative sign next to it. 
+
+What is interesting is that the song does not have to be energetic to be popular and danced to. The positiveness (valence) is also considered not popular.
+
+Other charasteristics, which are more technical, seem not to have much of importance.
+
+
