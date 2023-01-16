@@ -1,0 +1,73 @@
+---
+title: "Spotify ML 2 project"
+author: "Weronika Motkowska"
+date: "2023-01-16"
+output: rmdformats::material
+---
+
+# Audio features
+
+The idea for this project has been inspired by paper by Sciandra, Mariangela; Spera, Irene; 2020/01/01; "A Model Based Approach to Spotify Data Analysis: A Beta GLMM"; 10.2139/ssrn.3557124; SSRN Electronic Journal.
+
+The aim of this paper is to investigate if audio features from Spotify can be considered as determinants of the stream popularity of songs. In here the extracted data will consider different artist and the explained variable will be bounded popularity which can have values from 0 to 100 however the values are extracted the way the boundary values are not really possible so the explained variable can be considered as continuous.
+
+```{r warning=FALSE, message=FALSE}
+library(rvest)
+library(tidyverse)
+library(spotifyr)
+library(knitr)
+library(prettydoc)
+```
+
+```{r echo=FALSE}
+Sys.setenv(SPOTIFY_CLIENT_ID = "7279343fb60242fe8ee1194a4f7fe5df")
+Sys.setenv(SPOTIFY_CLIENT_SECRET = "10b0750b71d34615bf5e3396097b9b23")
+access_token <- get_spotify_access_token()
+```
+
+```{r}
+get_audio_features <- function(artist_name, artist_id){
+  
+  # artist <- search_spotify(artist_name, type = "artist", market = "US", limit = 1)
+  top <- get_artist_top_tracks(artist_id, 
+                               market = "US") %>% 
+    select(name, id, popularity)
+  
+  top.features <- data.frame()
+  for (id in top$id){
+    top.features <- get_track_audio_features(id) %>% 
+      bind_rows(top.features)
+  } 
+  
+  top <- top %>% 
+    left_join(top.features) %>% 
+    select(-c(15:18, 20)) 
+    # mutate(followers.total = artist$followers.total) %>% 
+    # mutate(genres = artist$genres)
+  
+  rm(
+     # artist, 
+     top.features)
+  
+  return(top)
+}
+```
+
+```{r}
+artists <- get_genre_artists(genre = "pop", market = "US", limit = 20) %>% 
+  select(name, id)
+```
+
+```{r message=FALSE, warning=FALSE}
+artist.data <- data.frame()
+for (i in 1:nrow(artists)){
+  artist_name <- artists[i, 1]
+  artist_id   <- artists[i, 2]
+  artist.data <- bind_rows(get_audio_features(artist_name, artist_id))
+}
+
+```
+
+```{r}
+artist.data %>%  arrange(name) %>% select(-id) %>% head()
+```
