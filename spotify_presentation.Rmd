@@ -1,15 +1,19 @@
 ---
-title: "Spotify ML 2 project"
+title: "Spotify audio features project"
 author: "Weronika Motkowska"
 date: "2023-01-16"
 output: rmdformats::material
 ---
 
-# Audio features
+# Spotify data
 
 The idea for this project has been inspired by paper by Sciandra, Mariangela; Spera, Irene; 2020/01/01; "A Model Based Approach to Spotify Data Analysis: A Beta GLMM"; 10.2139/ssrn.3557124; SSRN Electronic Journal.
 
-The aim of this paper is to investigate if audio features from Spotify can be considered as determinants of the stream popularity of songs. In here the extracted data will consider different artist and the explained variable will be bounded popularity which can have values from 0 to 100 however the values are extracted the way the boundary values are not really possible so the explained variable can be considered as continuous.
+The aim of this paper is to investigate if audio features from Spotify can be considered as determinants of the stream popularity of songs. The data is available through Spotify Developers API and library "spotifyr" gives clean code for requesting.
+
+In this project the extracted data will consider different artist from 3 genres and the explained variable will be popularity which can have values from 0 to 100. However, the values are distributed the way the boundary values are not really possible, so the explained variable can be considered as continuous in this project.
+
+First, let us load the libraries and data. For privacy reasons the dataset obtained from API will be loaded. However, the commented out code can be used for reproduction of requesting the data.
 
 ```{r warning=FALSE, message=FALSE}
 library(rvest)
@@ -17,9 +21,13 @@ library(tidyverse)
 library(spotifyr)
 library(knitr)
 library(ggplot2)
+library(caret)
+library(tree)
+library(rpart)
+library(rpart.plot)
 ```
 
-```{r echo=FALSE}
+```{r}
 # Sys.setenv(SPOTIFY_CLIENT_ID = "***")
 # Sys.setenv(SPOTIFY_CLIENT_SECRET = "***")
 # access_token <- get_spotify_access_token()
@@ -71,27 +79,47 @@ get_audio_features <- function(artist_name, artist_id, genre){
 # 
 # save(artist.data, file = "data")
 ```
-
+From the available data We have chosen 20 top artists from each genre and used 10 top songs from each one of them. For every song we obtain its audio features which characteristics can be understood from variable names. The table below shows 17 variables. Name, id and genre will not be used in analysis. Total followers is an indicator of artists' popularity.
 
 ```{r}
 load("data")
 str(artist.data)
-data <- artist.data %>% select(-c(name, id, genre)) %>% scale() %>% data.frame()
+```
+The song popularity score is similarly distributed, with "rock" being a little bit uncool compared to other genres.
+The top songs in our catalog are around 80 score in popularity.
+```{r}
+ggplot(artist.data, aes(popularity)) + 
+  geom_density(alpha = 0.2, fill = "lightgreen", colour = "lightgreen") +
+    theme_bw()
+ggplot(artist.data, aes(popularity, fill = genre, colour = genre)) +
+  geom_density(alpha = 0.2) +
+    theme_bw()
 ```
 
-# Simple analysis
 
 ```{r}
-ggplot(artist.data, aes(popularity, fill = genre, colour = genre)) +
-  geom_density(alpha = 0.2, na.rm = TRUE) 
+artist.data %>%
+    select(popularity) %>% 
+    summary()
 ```
+
+
+# Regression trees and linear model
+
+### From simple linear model on whole dataset we can explore some characteristics.
 
 ```{r}
 options(scipen = 8)
-model.lm <- lm(popularity ~ ., data)
+data <- artist.data %>% select(-c(name, id, genre))
+formula <- popularity ~ .
+model.lm <- lm(formula, data)
 summary(model.lm)
 ```
-The top songs in our catalog are around 86 score in popularity.
+```{r}
+formula <- popularity ~ danceability + energy + loudness + valence + duration_ms + followers.total
+model.lm <- lm(formula, data)
+summary(model.lm)
+```
 
 Danceability and loudness have significant positive impact on popularity. 
 The hypothesis is that the song is more popular if it is catchy and suitable for dancing on TikTok. 
@@ -103,4 +131,92 @@ What is interesting is that the song does not have to be energetic to be popular
 
 Other charasteristics, which are more technical, seem not to have much of importance.
 
+### Let us now try regression trees.
+
+```{r}
+set.seed(22061999)
+data <- artist.data %>% select(-c(name, id, genre))
+formula <- popularity ~ .
+training_obs <- createDataPartition(data$popularity, 
+                                    p = 0.7, 
+                                    list = FALSE)
+data.train <- data[training_obs,]
+data.test  <- data[-training_obs,]
+
+tree1 <- tree(formula, data.train, minsize = 50)
+plot(tree1); text(tree1, pretty = 0)
+```
+The first look at the regression tree with limitation of minimum 50 items in each node gives some interesting insights. Loudness and acousticness seem to be variables that enable to tell apart songs popularity between 80 and 90 when the artist is not as popular as the top ones. 
+You can also spot that the more valence the less popular song is.
+
+Next we will try to clean the regression tree and find an optimal number of nodes. To do this I will use cross-validation methods for choosing tree complexity.
+
+```{r}
+set.seed(22061999)
+tree2 <- tree(formula, data.train)
+tree2.cv <- cv.tree(tree2, K = 15)
+plot(tree2.cv$size, tree2.cv$dev, type = 'b')
+
+tree3 <- prune.tree(tree2, best = 5)
+plot(tree3); text(tree3, pretty = 0)
+
+tree4 <- prune.tree(tree2, best = 4)
+# plot(tree4); text(tree4, pretty = 0)
+```
+```{r}
+set.seed(22061999)
+tree5 <- rpart(formula, data.train, method = "anova")
+rpart.plot(tree5)
+```
+```{r}
+plotcp(tree5)
+```
+```{r}
+tree1.pred  <- predict(tree1, newdata = data.test)
+tree2.pred  <- predict(tree2, newdata = data.test)
+tree3.pred  <- predict(tree3, newdata = data.test)
+tree4.pred  <- predict(tree3, newdata = data.test)
+lm.pred <- predict(model.lm, data.test)
+```
+4 nodes is an optimal number for this regression tree.
+
+```{r echo = FALSE}
+getRegressionMetrics <- function(real, predicted) {
+  # function that summarizes popular error measures
+  
+  # Mean Square Error
+  MSE <- mean((real - predicted)^2)
+  # Root Mean Squera Error
+  RMSE <- sqrt(MSE)
+  # Mean Absolute Error
+  MAE <- mean(abs(real - predicted))
+  # Median Absolute Error
+  MedAE <- median(abs(real - predicted))
+  # Total Sum of Squares
+  TSS <- sum((real - mean(real))^2)
+  # Explained Sum of Squares
+  RSS <- sum((predicted - real)^2)
+  # R2
+  R2 <- 1 - RSS/TSS
+  
+  result <- data.frame(MSE, RMSE, MAE, MedAE, R2)
+  return(result)
+}
+```
+The pruned tree has lowest mean square of prediction error and highest R2. However, all of the models are similar to simple linear model.
+```{r}
+ bind_cols(tibble(tree1.pred,
+                  tree2.pred,
+                  tree3.pred,
+                  tree4.pred,
+                  lm.pred)) %>%
+  map_dfr(getRegressionMetrics, real = data.test$popularity, .id = "model")
+
+```
+
+```{r}
+tree.final <- tree4
+tree.final.pred <- tree4.pred
+plot(tree.final); text(tree.final, pretty = 0)
+```
 
